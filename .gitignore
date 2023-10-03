@@ -134,3 +134,6 @@ $RECYCLE.BIN/
 .DS_Store
 
 _NCrunch*
+/task1/.vs
+/.vs
+/task1/NuGetYOLO/.vs/NuGetYOLO/FileContentIndex
