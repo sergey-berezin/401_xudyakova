@@ -43,7 +43,7 @@ namespace NuGetYOLO
         static Queue<((Image<Rgb24>, string) Input, TaskCompletionSource<(Image<Rgb24>, DataTemplate)> Result)> mailbox = new();
 
         static CancellationTokenSource cts = new CancellationTokenSource();
-        static async Task<(Image<Rgb24>, DataTemplate)> Enqueue(Image<Rgb24> m, string f)
+        static async Task<(Image<Rgb24>, DataTemplate)> EnqueueAsync(Image<Rgb24> m, string f)
         {
             await boxLock.WaitAsync();
             if (mailbox.Count == 0)
@@ -53,11 +53,11 @@ namespace NuGetYOLO
             boxLock.Release();
             return await r.Task;
         }
-        static async Task Process()
+        static async Task ProcessAsync()
         {
             while (!cts.Token.IsCancellationRequested)
             {
-                await DownloadNetwork();
+                await DownloadNetworkAsync();
                 await hasMessages.WaitAsync();
                 await boxLock.WaitAsync();
                 var input = new Queue<((Image<Rgb24>, string) Input, TaskCompletionSource<(Image<Rgb24>, DataTemplate)> Result)>();
@@ -74,7 +74,7 @@ namespace NuGetYOLO
             }
         }
 
-        public static async Task<(List<Image<Rgb24>>, List<DataTemplate>)> Run(List<Image<Rgb24>> images, string[] filenames)
+        public static async Task<(List<Image<Rgb24>>, List<DataTemplate>)> RunAsync(List<Image<Rgb24>> images, string[] filenames)
         {
             (List<Image<Rgb24>>, List<DataTemplate>) results = (new List<Image<Rgb24>>(), new List<DataTemplate>());
             List<Task> tasks = new List<Task>();
@@ -89,7 +89,7 @@ namespace NuGetYOLO
                     {
                         j = nums.Dequeue();
                     }
-                    (Image<Rgb24>, DataTemplate) result = await Enqueue(images[j], filenames[j]);
+                    (Image<Rgb24>, DataTemplate) result = await EnqueueAsync(images[j], filenames[j]);
                     lock (results.Item1)
                     {
                         results.Item1.Add(result.Item1);
@@ -102,7 +102,7 @@ namespace NuGetYOLO
                 });
                 tasks.Add(task);
             }
-            var processTask = Task.Run(Process);
+            var processTask = Task.Run(ProcessAsync);
             foreach (var task in tasks)
             {
                 await Task.WhenAll(task);
@@ -112,7 +112,7 @@ namespace NuGetYOLO
             return results;
         }
 
-        static async Task DownloadNetwork()
+        static async Task DownloadNetworkAsync()
         {
             if (!System.IO.File.Exists("tinyyolov2-8.onnx"))
             {

@@ -54,9 +54,7 @@ namespace MainProgram
             }
             (List<Image<Rgb24>>, List<DataTemplate>) results;
 
-            var task = Run(images, filenames);
-            await task;
-            results = task.Result;
+            results = await RunAsync(images, filenames);
             
             WriteResults(dir, filename, results);            
         }
