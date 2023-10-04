@@ -68,7 +68,8 @@ namespace NuGetYOLO
                 {
                     var item = input.Dequeue();
                     // Выполняем полезные вычисления
-                    var result = Net_Predict(item.Input);
+                    using var session = new InferenceSession("tinyyolov2-8.onnx");
+                        var result = Net_Predict(item.Input, session);
                     item.Result.SetResult(result);
                 }
             }
@@ -133,7 +134,7 @@ namespace NuGetYOLO
             }
         }
 
-        static (Image<Rgb24>, DataTemplate) Net_Predict((Image<Rgb24>, string) data)
+        static (Image<Rgb24>, DataTemplate) Net_Predict((Image<Rgb24>, string) data, InferenceSession session)
         {
             var image = data.Item1;
             var filename = data.Item2;
@@ -171,10 +172,15 @@ namespace NuGetYOLO
                 NamedOnnxValue.CreateFromTensor("image", input),
             };
             // Вычисляем предсказание нейросетью
-            using var session = new InferenceSession("tinyyolov2-8.onnx");
-            using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results = session.Run(inputs);
+            IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results;
+            lock (session)
+            {
+                results = session.Run(inputs);
+            }
+
             // Получаем результаты
             var outputs = results.First().AsTensor<float>();
+
             const int CellCount = 13; // 13x13 ячеек
             const int BoxCount = 5; // 5 прямоугольников в каждой ячейке
             const int ClassCount = 20; // 20 классов
