@@ -15,52 +15,75 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using Polly;
+using System.Reflection;
+using System.Runtime.InteropServices;
+
 namespace NuGetYOLO
 {
-    public class DataTemplate
+    public class ObjectTemplate
     {
-        public DataTemplate(string filename, string label, float x, float y, float w, float h)
+        public ObjectTemplate(string label, int labelNum, float conf, float x, float y, float w, float h)
         {
-            Filename = filename;
             Label = label;
+            LabelNum = labelNum;
+            Conf = conf;
             X = x;
             Y = y;
             W = w;
             H = h;
         }
-        public string Filename { get; set; }
         public string Label { get; set; }
+        public int LabelNum { get; set; }
+        public float Conf { get; set; }
         public float X { get; set; }
         public float Y { get; set; }
         public float W { get; set; }
         public float H { get; set; }
-
+        public double IoU(ObjectTemplate obj2)
+        {
+            if ((X + W < obj2.X) || (obj2.X + obj2.W < X) || (Y + H < obj2.Y) || (obj2.Y + obj2.H < Y))
+                return 0.0;
+            double intersection = (Math.Min(X + W, obj2.X + obj2.W) - Math.Max(X, obj2.X)) * (Math.Min(Y + H, obj2.Y + obj2.H) - Math.Max(Y, obj2.Y));
+            double union = (Math.Max(X + W, obj2.X + obj2.W) - Math.Min(X, obj2.X)) * (Math.Max(Y + H, obj2.Y + obj2.H) - Math.Min(Y, obj2.Y));
+            
+            return intersection / union;
+        }
+    }
+    public class DataTemplate
+    {
+        public string Filename { get; set; }
+        public Image<Rgb24> LabelledImage { get; set; }
+        public List<ObjectTemplate> ObjectTemplates { get; set; }
+        public DataTemplate(string filename, Image<Rgb24> labelledImage, List<ObjectTemplate> objectTemplates)
+        {
+            Filename = filename;
+            LabelledImage = labelledImage;
+            ObjectTemplates = objectTemplates;
+        }
     }
     public static class YOLO
     {
         static SemaphoreSlim hasMessages = new SemaphoreSlim(0, 1);
         static SemaphoreSlim boxLock = new SemaphoreSlim(1, 1);
-        static Queue<((Image<Rgb24>, string) Input, TaskCompletionSource<(Image<Rgb24>, DataTemplate)> Result)> mailbox = new();
-
-        static CancellationTokenSource cts = new CancellationTokenSource();
-        static async Task<(Image<Rgb24>, DataTemplate)> EnqueueAsync(Image<Rgb24> m, string f)
+        static Queue<((Image<Rgb24>, string) Input, TaskCompletionSource<DataTemplate> Result)> mailbox = new();
+        static async Task<DataTemplate> EnqueueAsync(Image<Rgb24> m, string f)
         {
             await boxLock.WaitAsync();
             if (mailbox.Count == 0)
                 hasMessages.Release();
-            var r = new TaskCompletionSource<(Image<Rgb24>, DataTemplate)>();
+            var r = new TaskCompletionSource<DataTemplate>();
             mailbox.Enqueue(((m, f), r));
             boxLock.Release();
             return await r.Task;
         }
-        static async Task ProcessAsync()
+        static async Task ProcessAsync(CancellationTokenSource cts)
         {
             while (!cts.Token.IsCancellationRequested)
             {
-                await DownloadNetworkAsync();
+                await DownloadNetworkAsync(cts);
                 await hasMessages.WaitAsync();
                 await boxLock.WaitAsync();
-                var input = new Queue<((Image<Rgb24>, string) Input, TaskCompletionSource<(Image<Rgb24>, DataTemplate)> Result)>();
+                var input = new Queue<((Image<Rgb24>, string) Input, TaskCompletionSource<DataTemplate> Result)>();
                 while (mailbox.Count > 0)
                     input.Enqueue(mailbox.Dequeue());
                 boxLock.Release();
@@ -75,9 +98,46 @@ namespace NuGetYOLO
             }
         }
 
-        public static async Task<(List<Image<Rgb24>>, List<DataTemplate>)> RunAsync(List<Image<Rgb24>> images, string[] filenames)
+        const int CellCount = 13; // 13x13 ячеек
+        const int BoxCount = 5; // 5 прямоугольников в каждой ячейке
+        const int ClassCount = 20; // 20 классов
+        const int CellWidth = 32; // 416 / 13
+        const int CellHeight = 32; // 416 / 13
+
+        // Размер изображения
+        const int TargetWidth = 416;
+        const int TargetHeight = 416;
+        const double treshholdConf = 0.3;
+
+        static string[] labels = new string[]
         {
-            (List<Image<Rgb24>>, List<DataTemplate>) results = (new List<Image<Rgb24>>(), new List<DataTemplate>());
+                "aeroplane", "bicycle", "bird", "boat", "bottle",
+                "bus", "car", "cat", "chair", "cow",
+                "diningtable", "dog", "horse", "motorbike", "person",
+                "pottedplant", "sheep", "sofa", "train", "tvmonitor"
+        };
+
+        public static Color[] colors = new Color[]
+        {
+                Color.AliceBlue, Color.AntiqueWhite, Color.Aqua, Color.Aquamarine, Color.Azure, Color.Beige,
+                Color.Bisque, Color.Black, Color.BlanchedAlmond, Color.Blue, Color.BlueViolet, Color.Brown, Color.BurlyWood,
+                Color.CadetBlue, Color.Chartreuse, Color.Chocolate, Color.Coral, Color.CornflowerBlue, Color.Cornsilk,
+                Color.Crimson, Color.Cyan, Color.DarkBlue, Color.DarkCyan, Color.DarkGoldenrod, Color.DarkGray, Color.DarkGreen,
+                Color.DarkKhaki, Color.DarkMagenta, Color.DarkOliveGreen, Color.DarkOrange, Color.DarkOrchid, Color.DarkRed
+        };
+
+        static float Sigmoid(float value)
+        {
+            var e = (float)Math.Exp(value);
+            return e / (1.0f + e);
+        }
+
+
+        public static async Task<List<DataTemplate>> RunAsync(List<Image<Rgb24>> images, string[] filenames, CancellationTokenSource? cts = null)
+        {
+            if (cts == null) 
+                cts = new CancellationTokenSource();
+            List<DataTemplate> results = new List<DataTemplate>();
             List<Task> tasks = new List<Task>();
             Queue<int> nums = new Queue<int>();
             for (var i = 0; i < images.Count(); i++)
@@ -87,23 +147,14 @@ namespace NuGetYOLO
                 {
                     int j = 0;
                     lock (nums)
-                    {
                         j = nums.Dequeue();
-                    }
-                    (Image<Rgb24>, DataTemplate) result = await EnqueueAsync(images[j], filenames[j]);
-                    lock (results.Item1)
-                    {
-                        results.Item1.Add(result.Item1);
-                    }
-                    lock (results.Item2)
-                    {
-                        results.Item2.Add(result.Item2);
-                    }
-
+                    DataTemplate result = await EnqueueAsync(images[j], filenames[j]);
+                    lock (results)
+                        results.Add(result);
                 });
                 tasks.Add(task);
             }
-            var processTask = Task.Run(ProcessAsync);
+            var processTask = Task.Run(async() => { return ProcessAsync(cts); });
             foreach (var task in tasks)
             {
                 await Task.WhenAll(task);
@@ -113,7 +164,7 @@ namespace NuGetYOLO
             return results;
         }
 
-        static async Task DownloadNetworkAsync()
+        static async Task DownloadNetworkAsync(CancellationTokenSource cts)
         {
             if (!System.IO.File.Exists("tinyyolov2-8.onnx"))
             {
@@ -134,16 +185,12 @@ namespace NuGetYOLO
             }
         }
 
-        static (Image<Rgb24>, DataTemplate) Net_Predict((Image<Rgb24>, string) data, InferenceSession session)
+        static DataTemplate Net_Predict((Image<Rgb24>, string) data, InferenceSession session)
         {
             var image = data.Item1;
             var filename = data.Item2;
             int imageWidth = image.Width;
             int imageHeight = image.Height;
-
-            // Размер изображения
-            const int TargetWidth = 416;
-            const int TargetHeight = 416;
 
             // Изменяем размер изображения до 416 x 416
             var resized = image.Clone(x =>
@@ -174,99 +221,82 @@ namespace NuGetYOLO
             // Вычисляем предсказание нейросетью
             IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results;
             lock (session)
-            {
                 results = session.Run(inputs);
-            }
 
             // Получаем результаты
             var outputs = results.First().AsTensor<float>();
 
-            const int CellCount = 13; // 13x13 ячеек
-            const int BoxCount = 5; // 5 прямоугольников в каждой ячейке
-            const int ClassCount = 20; // 20 классов
-
-            string[] labels = new string[]
-            {
-                "aeroplane", "bicycle", "bird", "boat", "bottle",
-                "bus", "car", "cat", "chair", "cow",
-                "diningtable", "dog", "horse", "motorbike", "person",
-                "pottedplant", "sheep", "sofa", "train", "tvmonitor"
-            };
-
-            float Sigmoid(float value)
-            {
-                var e = (float)Math.Exp(value);
-                return e / (1.0f + e);
-            }
-
-            List<float> confs = new List<float>();
-            int i = 0;
-            var bestConf = Double.MinValue;
-            int bestRow = -1, bestCol = -1, bestBbox = -1;
+            List<ObjectTemplate> objectTemplates = new List<ObjectTemplate>();
             for (var row = 0; row < CellCount; row++)
                 for (var col = 0; col < CellCount; col++)
                     for (var bbox = 0; bbox < BoxCount; bbox++)
                     {
                         var conf = Sigmoid(outputs[0, (5 + ClassCount) * bbox + 4, row, col]);
-                        confs.Add(conf);
-                        var _classes =
-                        Enumerable.Range(0, ClassCount)
-                        .Select(i => outputs[0, (5 + ClassCount) * bbox + 5 + i, row, col])
-                        .ToArray();
-                        int _bestClass = 0;
-                        for (var cls = 1; cls < ClassCount; cls++)
-                            if (_classes[_bestClass] < _classes[cls])
-                                _bestClass = cls;
-                        if (conf > bestConf)
+                        if (conf >= treshholdConf)
                         {
-                            bestConf = conf;
-                            bestRow = row;
-                            bestCol = col;
-                            bestBbox = bbox;
+                            var classes =
+                                Enumerable.Range(0, ClassCount)
+                                .Select(i => outputs[0, (5 + ClassCount) * bbox + 5 + i, row, col])
+                                .ToArray();
+
+                            int bestClass = 0;
+                            for (var cls = 1; cls < ClassCount; cls++)
+                                if (classes[bestClass] < classes[cls])
+                                    bestClass = cls;
+
+                            var outX = outputs[0, (5 + ClassCount) * bbox, row, col];
+                            var outY = outputs[0, (5 + ClassCount) * bbox + 1, row, col];
+                            var outW = outputs[0, (5 + ClassCount) * bbox + 2, row, col];
+                            var outH = outputs[0, (5 + ClassCount) * bbox + 3, row, col];
+
+                            double[] anchors = new double[]
+                            {
+                                1.08, 1.19, 3.42, 4.41, 6.63, 11.38, 9.42, 5.11, 16.62, 10.52
+                            };
+
+                            var X = ((float)col + Sigmoid(outX)) * CellWidth;
+                            var Y = ((float)row + Sigmoid(outY)) * CellHeight;
+                            var width = (float)(Math.Exp(outW) * CellWidth * anchors[bbox * 2]);
+                            var height = (float)(Math.Exp(outH) * CellHeight * anchors[bbox * 2 + 1]);
+                            X -= width / 2;
+                            Y -= height / 2;
+
+                            objectTemplates.Add(new ObjectTemplate(labels[bestClass], bestClass, conf, X, Y, width, height));
                         }
                     }
-
-            var classes =
-                Enumerable.Range(0, ClassCount)
-                .Select(i => outputs[0, (5 + ClassCount) * bestBbox + 5 + i, bestRow, bestCol])
-                .ToArray();
-
-            int bestClass = 0;
-            for (var cls = 1; cls < ClassCount; cls++)
-                if (classes[bestClass] < classes[cls])
-                    bestClass = cls;
-
-            var outX = outputs[0, (5 + ClassCount) * bestBbox, bestRow, bestCol];
-            var outY = outputs[0, (5 + ClassCount) * bestBbox + 1, bestRow, bestCol];
-            var outW = outputs[0, (5 + ClassCount) * bestBbox + 2, bestRow, bestCol];
-            var outH = outputs[0, (5 + ClassCount) * bestBbox + 3, bestRow, bestCol];
-
-            double[] anchors = new double[]
+            for (int i = 0; i < objectTemplates.Count; i++)
             {
-                1.08, 1.19, 3.42, 4.41, 6.63, 11.38, 9.42, 5.11, 16.62, 10.52
-            };
+                var obj1 = objectTemplates[i];
+                int j = i + 1;
+                while (j < objectTemplates.Count)
+                {
+                    var obj2 = objectTemplates[j];
+                    if ((obj1.Label == obj2.Label) && (obj1.IoU(obj2) > 0.5))
+                    {
+                        if (obj1.Conf < obj2.Conf)
+                        {
+                            objectTemplates[i] = objectTemplates[j];
+                            obj1 = objectTemplates[j];
+                        }
+                        objectTemplates.RemoveAt(j);
+                    }
+                    else
+                        j++;
+                }
+            }
 
-            const int CellWidth = 32; // 416 / 13
-            const int CellHeight = 32; // 416 / 13
+            foreach (var obj in objectTemplates)
+                resized.Mutate(
+                    ctx => ctx.DrawPolygon(
+                        Pens.Dash(colors[obj.LabelNum], 2),
+                        new PointF[] {
+                            new PointF(obj.X, obj.Y),
+                            new PointF(obj.X + obj.W, obj.Y),
+                            new PointF(obj.X + obj.W, obj.Y + obj.H),
+                            new PointF(obj.X, obj.Y + obj.H)
+                        }));
 
-            var X = ((float)bestCol + Sigmoid(outX)) * CellWidth;
-            var Y = ((float)bestRow + Sigmoid(outY)) * CellHeight;
-            var width = (float)(Math.Exp(outW) * CellWidth * anchors[bestBbox * 2]);
-            var height = (float)(Math.Exp(outH) * CellHeight * anchors[bestBbox * 2 + 1]);
-            X -= width / 2;
-            Y -= height / 2;
-
-
-            resized.Mutate(
-                ctx => ctx.DrawPolygon(
-                    Pens.Dash(Color.Red, 2),
-                    new PointF[] {
-                        new PointF(X, Y),
-                        new PointF(X + width, Y),
-                        new PointF(X + width, Y + height),
-                        new PointF(X, Y + height)
-                    }));
-            return (resized, new DataTemplate($"{filename.Split('\\').Last().Split('/').Last().Split('.').First()}_result.jpg", labels[bestClass], X, Y, width, height));
+            return new DataTemplate(filename, resized, objectTemplates);
         }
     }
 }
