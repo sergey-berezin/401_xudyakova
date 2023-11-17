@@ -87,7 +87,7 @@ namespace NuGetYOLO
                 while (mailbox.Count > 0)
                     input.Enqueue(mailbox.Dequeue());
                 boxLock.Release();
-                while (input.Count > 0)
+                while (input.Count > 0 && !cts.IsCancellationRequested)
                 {
                     var item = input.Dequeue();
                     // Выполняем полезные вычисления
@@ -157,6 +157,8 @@ namespace NuGetYOLO
             var processTask = Task.Run(async() => { return ProcessAsync(cts); });
             foreach (var task in tasks)
             {
+                if (cts.IsCancellationRequested)
+                    return new List<DataTemplate>();
                 await Task.WhenAll(task);
             }
             cts.Cancel();

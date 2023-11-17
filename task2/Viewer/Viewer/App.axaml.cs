@@ -19,10 +19,9 @@ namespace Viewer
             {
                 desktop.MainWindow = new MainWindow
                 {
-                    DataContext = new MainWindowViewModel(),
+                    DataContext = new MainWindowViewModel(new FSServices())
                 };
             }
-
             base.OnFrameworkInitializationCompleted();
         }
     }

@@ -9,7 +9,7 @@
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <Title>NuGetYOLO</Title>
     <Company>$(Authors) </Company>
-    <Version>$(VersionPrefix)1.0.19</Version>
+    <Version>$(VersionPrefix)1.0.20</Version>
   </PropertyGroup>
 
   <ItemGroup>
