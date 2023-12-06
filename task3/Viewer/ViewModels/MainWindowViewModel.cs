@@ -4,7 +4,7 @@ using Task3.Models;
 using NuGetYOLO;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.Formats.Png;
 using ReactiveUI;
 using Microsoft.Toolkit.Mvvm.ComponentModel;
 using System.Threading.Tasks;
@@ -102,7 +102,7 @@ namespace Task3.ViewModels
         private static Bitmap ImageToBitmap(Image<Rgb24> image)
         {
             var memoryStream = new System.IO.MemoryStream();
-            image.Save(memoryStream, new JpegEncoder());
+            image.Save(memoryStream, new PngEncoder());
             memoryStream.Position = 0;
             var result = new Bitmap(memoryStream);
             memoryStream.Close();
