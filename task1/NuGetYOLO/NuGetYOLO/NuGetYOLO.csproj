@@ -2,14 +2,14 @@
 
   <PropertyGroup>
 	  <OutputType>Library</OutputType>
-    <TargetFramework>net5.0</TargetFramework>
+    <TargetFramework>netcoreapp3.1</TargetFramework>
     <ImplicitUsings>disable</ImplicitUsings>
 	  <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <Nullable>enable</Nullable>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <Title>NuGetYOLO</Title>
     <Company>$(Authors) </Company>
-    <Version>$(VersionPrefix)1.0.20</Version>
+    <Version>$(VersionPrefix)1.0.21</Version>
   </PropertyGroup>
 
   <ItemGroup>

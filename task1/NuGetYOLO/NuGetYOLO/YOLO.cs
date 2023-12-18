@@ -65,7 +65,7 @@ namespace NuGetYOLO
     {
         static SemaphoreSlim hasMessages = new SemaphoreSlim(0, 1);
         static SemaphoreSlim boxLock = new SemaphoreSlim(1, 1);
-        static Queue<((Image<Rgb24>, string) Input, TaskCompletionSource<DataTemplate> Result)> mailbox = new();
+        static Queue<((Image<Rgb24>, string) Input, TaskCompletionSource<DataTemplate> Result)> mailbox = new Queue<((Image<Rgb24>, string) Input, TaskCompletionSource<DataTemplate> Result)>();
         static async Task<DataTemplate> EnqueueAsync(Image<Rgb24> m, string f)
         {
             await boxLock.WaitAsync();
@@ -180,7 +180,7 @@ namespace NuGetYOLO
                 {
                     var buffer = await retryPolicy.ExecuteAsync(async () =>
                     {
-                        return await httpClient.GetByteArrayAsync("https://storage.yandexcloud.net/dotnet4/tinyyolov2-8.onnx", cts.Token);
+                        return await httpClient.GetByteArrayAsync("https://storage.yandexcloud.net/dotnet4/tinyyolov2-8.onnx");
                     });
                     await File.WriteAllBytesAsync("tinyyolov2-8.onnx", buffer, cts.Token);
                 }

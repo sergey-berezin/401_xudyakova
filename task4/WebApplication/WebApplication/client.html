@@ -1,0 +1,186 @@
+﻿
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>ObjectDetection</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.8.3/jquery.min.js"></script>
+
+    <input type="file" id="imageInput" />
+    <button onclick="OnFileSelected()">Upload Image</button>
+
+    <div id="container" hidden="hidden">
+        <img style="font-family:Arial" id="image" alt="Image" width="500" height="500">
+        <canvas id="myCanvas"></canvas>
+    </div>
+
+    <table class="DetectedData" id="table" hidden="hidden">
+        <thead>
+            <tr>
+                <th> Number </th>
+                <th> Label </th>
+                <th> Confidence </th>
+                <th> X </th>
+                <th> Y </th>
+                <th> Width </th>
+                <th> Height </th>
+            </tr>
+        </thead>
+        <tbody>
+        </tbody>
+    </table>
+
+    <h2 id="no_obj">No detected objects</h2>
+
+    <h2 id="Error" style="color:crimson" hidden="hidden">Error</h2>
+
+    <script type="text/javascript">
+        const canvas = document.getElementById("myCanvas");
+        const ctx = canvas.getContext("2d");
+        const container = document.getElementById('container');
+        const table = document.getElementById('table');
+        const TARGETSIZE = 416;
+        let selectedTr;
+
+        function OnFileSelected() {
+            var uploadFile = document.getElementById("imageInput");
+            const filename = uploadFile.files[0];
+            const reader = new FileReader();
+            const imageObj = document.getElementById('image');
+
+            reader.addEventListener('load', () => {
+                container.removeAttribute('hidden');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                imageObj.src = reader.result;
+
+                imageObj.width = TARGETSIZE;
+                imageObj.height = TARGETSIZE;
+
+                var img = getBase64Image(reader.result);
+
+                document.getElementById('Error').setAttribute('hidden', 'hidden');
+                if (selectedTr) {
+                    selectedTr.classList.remove('highlight');
+                }
+                $("#table tr").remove();
+
+                table.setAttribute('hidden', 'hidden');
+
+                table.onclick = function (event) {
+                    let target = event.target;
+
+                    if (target.tagName == 'TD')
+                        Highlight(target.parentNode);
+
+                    if (target.tagName != 'TR') return;
+                    
+                };
+
+                YOLOProcessing(img);
+            });
+
+            reader.readAsDataURL(filename);
+        }
+
+        function getBase64Image(img) {
+            img = img.replace('data:', '').replace(/^.+,/, '');
+            var image = new Image();
+            image.src = img;
+            var canvas = document.createElement("canvas");
+            canvas.width = image.width;
+            canvas.height = image.height;
+            var ctx = canvas.getContext("2d");;
+            image.onload = function () {
+                ctx.drawImage(image, 0, 0);
+            }
+            return img;
+        }
+
+        async function YOLOProcessing(img) {
+            try {
+                response = await fetch("http://localhost:5000/Home", {
+                    method: "POST",
+                    headers:
+                    {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify(img),
+                })
+
+                if (!response.ok) {
+                    throw new Error(`Request failed with status: ${response.status}`);
+                }
+
+                let json = await response.json();
+                let i, Label, Conf, X, Y, W, H;
+                if (json.length > 0) {
+                    $("#no_obj").css("display", "none");
+                    table.removeAttribute('hidden');
+                }
+                else {
+                    $("#no_obj").css("display", "block");
+                    table.setAttribute('hidden', 'hidden');
+                }
+
+                for (i = 0; i < json.length; ++i) {
+                    Label = json[i].label;
+                    Conf = json[i].conf;
+                    X = json[i].x;
+                    Y = json[i].y;
+                    W = json[i].w;
+                    H = json[i].h;
+                    var row = '<tr><td>' + (i + 1) + '</td><td>' + Label + '</td><td>' + Conf.toPrecision(3)
+                        + '</td><td>' + X.toPrecision(3) + '</td><td>' + Y.toPrecision(3)
+                        + '</td><td>' + W.toPrecision(3) + '</td><td>' + H.toPrecision(3) + '</td>';
+                    $("#table > tbody").append(row);
+                }
+                canvas.width = container.offsetWidth;
+                canvas.height = container.offsetHeight;
+                DrawAll();
+            }
+            catch (err) {
+                document.getElementById('Error').textContent = err;
+                document.getElementById('Error').removeAttribute('hidden');
+            }
+        }
+
+        function DrawAll() {
+            for (i = 0; i < table.rows.length; ++i) {
+                tr = $("#table tr")[i];
+                let X = tr.cells[3].innerHTML;
+                let Y = tr.cells[4].innerHTML;
+                let W = tr.cells[5].innerHTML;
+                let H = tr.cells[6].innerHTML;
+
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = "#0060FF";
+                ctx.strokeRect(X, Y, W, H);
+            }
+        }
+
+        function Highlight(tr) {
+            if (selectedTr) {
+                selectedTr.classList.remove('highlight');
+            }
+            selectedTr = tr;
+            selectedTr.classList.add('highlight');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            canvas.width = container.offsetWidth;
+            canvas.height = container.offsetHeight;
+            DrawAll();
+
+            let X = tr.cells[3].innerHTML;
+            let Y = tr.cells[4].innerHTML;
+            let W = tr.cells[5].innerHTML;
+            let H = tr.cells[6].innerHTML;
+            ctx.lineWidth = 5;
+            ctx.strokeStyle = "#0080FF";
+            ctx.strokeRect(X, Y, W, H);
+        }
+    </script>
+</body>
+</html>
